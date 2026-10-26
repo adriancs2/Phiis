@@ -1,3 +1,5 @@
+![Logo Phiis](https://raw.githubusercontent.com/adriancs2/Phiis/refs/heads/main/wiki/logo.png)
+
 # Phiis - PHP Configurator for IIS - The New PHP Manager for IIS
 
 A modern, public-domain alternative to the archived *PHP Manager 2 for IIS*, built for PHP 8.x.
