@@ -1,0 +1,95 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <!-- UpgradeCode must never change: it is how Windows recognises future Phiis versions as upgrades. -->
+  <Package Name="Phiis - PHP Configurator for IIS"
+           Manufacturer="Phiis"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="1CB8494B-E914-4E6F-B7AD-6900EB43687C"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Phiis is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- IIS 7 or later must be installed. -->
+    <Property Id="IISMAJORVERSION">
+      <RegistrySearch Id="IisVersionSearch" Root="HKLM" Key="SOFTWARE\Microsoft\InetStp" Name="MajorVersion" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="Installed OR IISMAJORVERSION" Message="Phiis requires Internet Information Services (IIS). Install IIS with the CGI role service first." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Phiis">
+        <Directory Id="GACFOLDER" Name="gac" />
+      </Directory>
+      <!-- A standard PSModulePath location, so 'Import-Module Phiis' works everywhere. -->
+      <Directory Id="WindowsPowerShellFolder" Name="WindowsPowerShell">
+        <Directory Id="PsModulesFolder" Name="Modules">
+          <Directory Id="PsPhiisFolder" Name="Phiis">
+            <Directory Id="PSMODULEFOLDER" Name="$(var.ProductVersion)" />
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Phiis" Level="1">
+      <ComponentGroupRef Id="CliFiles" />
+      <ComponentGroupRef Id="GacFiles" />
+      <ComponentGroupRef Id="PowerShellFiles" />
+    </Feature>
+
+    <ComponentGroup Id="PowerShellFiles" Directory="PSMODULEFOLDER">
+      <Component>
+        <File Source="..\Phiis.PowerShell\Phiis.psd1" />
+      </Component>
+      <Component>
+        <File Source="..\Phiis.PowerShell\Phiis.psm1" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Command line (phiis.exe), added to the system PATH. -->
+    <ComponentGroup Id="CliFiles" Directory="INSTALLFOLDER">
+      <Component>
+        <File Id="PhiisExe" Source="$(var.Phiis.Cli.TargetDir)phiis.exe" KeyPath="yes" />
+        <Environment Id="PathEntry" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="yes" Permanent="no" />
+      </Component>
+      <Component>
+        <File Source="$(var.Phiis.Cli.TargetDir)phiis.exe.config" />
+      </Component>
+      <Component>
+        <File Id="CoreLocal" Source="$(var.Phiis.Cli.TargetDir)Phiis.Core.dll" />
+      </Component>
+      <Component>
+        <File Source="$(var.Phiis.Cli.TargetDir)Microsoft.Web.Administration.dll" />
+      </Component>
+      <Component>
+        <!-- Local copy so 'phiis snapin register' can read the assembly identity. -->
+        <File Id="SnapinLocal" Source="$(var.Phiis.IisManager.TargetDir)Phiis.IisManager.dll" />
+      </Component>
+      <Component>
+        <File Source="..\..\LICENSE" Name="LICENSE.txt" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- IIS Manager loads snap-ins from the Global Assembly Cache. -->
+    <ComponentGroup Id="GacFiles" Directory="GACFOLDER">
+      <Component>
+        <File Id="CoreGac" Source="$(var.Phiis.IisManager.TargetDir)Phiis.Core.dll" Assembly=".net" KeyPath="yes" />
+      </Component>
+      <Component>
+        <File Id="SnapinGac" Source="$(var.Phiis.IisManager.TargetDir)Phiis.IisManager.dll" Assembly=".net" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Register/unregister the IIS Manager page through phiis.exe, the same tested code path users run. -->
+    <CustomAction Id="RegisterSnapin" FileRef="PhiisExe" ExeCommand="snapin register"
+                  Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="UnregisterSnapin" FileRef="PhiisExe" ExeCommand="snapin unregister"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="UnregisterSnapin" After="InstallInitialize" Condition="Installed AND REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="RegisterSnapin" Before="InstallFinalize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+  </Package>
+</Wix>

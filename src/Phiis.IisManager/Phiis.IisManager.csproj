@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Phiis.IisManager</RootNamespace>
+    <AssemblyName>Phiis.IisManager</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Microsoft.Web.Management.dll only exists where the IIS Management Console is installed. -->
+    <IisInetsrv>$(windir)\System32\inetsrv</IisInetsrv>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Phiis.Core\Phiis.Core.csproj" />
+    <Reference Include="Microsoft.Web.Management">
+      <HintPath>$(IisInetsrv)\Microsoft.Web.Management.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

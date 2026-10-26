@@ -1,0 +1,57 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa]rm64/
+artifacts/
+publish/
+*.msi
+*.wixpdb
+*.wixobj
+*.cab
+
+# Tests and coverage
+TestResults/
+*.trx
+coverage*.json
+coverage*.xml
+*.coverage
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+.nuget/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.user
+*.suo
+*.userprefs
+*.sln.docstates
+_ReSharper*/
+*.DotSettings.user
+
+# Logs and temp files
+*.log
+*.tmp
+*.phiis-tmp
+
+# Code-signing material (Phiis.snk is a public strong-name identity and stays in the repo;
+# Authenticode certificates must never be committed)
+*.pfx
+*.p12
+*.cer
+*.pvk
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

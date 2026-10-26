@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Phiis.Cli</RootNamespace>
+    <AssemblyName>phiis</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Phiis.Core\Phiis.Core.csproj" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+</Project>

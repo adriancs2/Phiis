@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="Phiis.Core/Phiis.Core.csproj" />
+  <Project Path="Phiis.Cli/Phiis.Cli.csproj" />
+  <Project Path="Phiis.IisManager/Phiis.IisManager.csproj" />
+  <Project Path="Phiis.Tests/Phiis.Tests.csproj" />
+  <Project Path="Phiis.Setup/Phiis.Setup.wixproj">
+    <Platform Project="x64" />
+    <Build Project="true" />
+  </Project>
+</Solution>

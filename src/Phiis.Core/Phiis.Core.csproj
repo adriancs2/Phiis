@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Phiis.Core</RootNamespace>
+    <AssemblyName>Phiis.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Official Microsoft package; same 7.0.0.0 assembly that ships in %windir%\System32\inetsrv. -->
+    <PackageReference Include="Microsoft.Web.Administration" Version="7.0.0" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Bundled fallback copy of PHP lifecycle data. Can be overridden without a rebuild. -->
+    <EmbeddedResource Include="Data\php-lifecycle.json" LogicalName="Phiis.Core.php-lifecycle.json" />
+  </ItemGroup>
+
+</Project>

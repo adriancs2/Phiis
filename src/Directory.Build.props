@@ -1,0 +1,28 @@
+<Project>
+  <!-- Shared settings for every Phiis project.
+       Phiis targets .NET Framework 4.8 / C# 7.3 on purpose: it must run on any
+       IIS server, including legacy ones without a modern .NET runtime. -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Version>0.3.0</Version>
+    <Product>Phiis</Product>
+    <Description>Phiis - PHP Configurator for IIS</Description>
+    <Copyright>Public domain (The Unlicense)</Copyright>
+    <Deterministic>true</Deterministic>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Strong naming is required because IIS Manager loads snap-ins from the GAC.
+         It is an identity, not a security measure, so the key is kept in the repository. -->
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)Phiis.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
+  <!-- The GAC always wins over a local file with the same strong name, so on a machine with Phiis
+       installed, Debug tests would silently run the installed copy. Debug builds therefore use an
+       assembly version that is never installed. (Configuration is still empty here when not passed
+       explicitly, because this file is read before the SDK defaults it to Debug.) -->
+  <PropertyGroup Condition="'$(Configuration)' != 'Release'">
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+  </PropertyGroup>
+</Project>
