@@ -56,6 +56,8 @@ namespace Phiis.Cli
                 case "status": return Status(o);
                 case "doctor": return RunDoctor(o);
                 case "register": return Register(o);
+                case "unregister": return Unregister(o);
+                case "use-global": return UseGlobal(o);
                 case "ini": return Ini(o);
                 case "ext": return Ext(o);
                 case "snapin": return Snapin(o);
@@ -110,6 +112,10 @@ namespace Phiis.Cli
             return Output(data, () =>
             {
                 Console.WriteLine("Scope:             " + (status.Site ?? "server"));
+                if (status.Site != null)
+                {
+                    Console.WriteLine("PHP for this site: " + DescribeMode(status));
+                }
                 Console.WriteLine("FastCgiModule:     " + (status.FastCgiModuleInstalled ? "installed" : "NOT installed"));
                 Console.WriteLine("index.php default: " + (status.IndexPhpIsDefaultDocument ? "yes" : "no"));
                 Console.WriteLine("php.ini:           " + (status.IniPath ?? "-"));
@@ -176,6 +182,24 @@ namespace Phiis.Cli
             var iniPath = o.DryRun ? build.DefaultIniPath : (iis.GetStatus(o.Site).IniPath ?? build.DefaultIniPath);
             PhpIniSetup.Prepare(build, iniPath, result);
             return PrintChange(result);
+        }
+
+        private static int Unregister(Options o)
+        {
+            if (o.Site != null)
+            {
+                throw new ArgumentException("unregister works at the server level only. To stop a site using its own version: phiis use-global --site \"" + o.Site + "\"");
+            }
+            return PrintChange(new IisPhpConfiguration().Unregister(o.Require(1, "path to php-cgi.exe"), o.DryRun));
+        }
+
+        private static int UseGlobal(Options o)
+        {
+            if (o.Site == null)
+            {
+                throw new ArgumentException("use-global needs --site <name>.");
+            }
+            return PrintChange(new IisPhpConfiguration().UseGlobalDefault(o.Site, o.DryRun));
         }
 
         private static int Ini(Options o)
@@ -387,11 +411,30 @@ namespace Phiis.Cli
             });
         }
 
+        private static string DescribeMode(PhpStatus s)
+        {
+            switch (s.Mode)
+            {
+                case PhpScopeMode.GlobalDefault:
+                    return "global default" + (s.GlobalDefault == null ? " (none registered)" : " (" + s.GlobalDefault.ScriptProcessor + ")");
+                case PhpScopeMode.Pinned:
+                    return "own version" + (s.ActiveHandler == null ? "" : " (" + s.ActiveHandler.ScriptProcessor + ")")
+                           + (s.ActiveHandler != null && !IisPhpConfiguration.IsGloballyRegistered(s, s.ActiveHandler.ScriptProcessor.Split('|')[0])
+                               ? " - no longer registered globally" : "");
+                case PhpScopeMode.FullCopy:
+                    return "frozen copy of the server handler list (switching PHP converts it to a normal site)";
+                default:
+                    return "server";
+            }
+        }
+
         private static Dictionary<string, object> StatusToData(PhpStatus s)
         {
             return new Dictionary<string, object>
             {
                 { "scope", s.Site ?? "server" },
+                { "mode", s.Mode.ToString() },
+                { "globalDefault", s.GlobalDefault == null ? null : s.GlobalDefault.ScriptProcessor },
                 { "fastCgiModuleInstalled", s.FastCgiModuleInstalled },
                 { "indexPhpIsDefaultDocument", s.IndexPhpIsDefaultDocument },
                 { "iniPath", s.IniPath },
@@ -448,7 +491,11 @@ Commands:
   info <php-cgi.exe>               Show version, architecture, TS/NTS, toolset, end of life
   status                           Show PHP handlers, FastCGI apps and php.ini for a scope
   doctor                           Check the PHP/IIS setup and explain problems
-  register <php-cgi.exe>           Register PHP with IIS and make it active (idempotent)
+  register <php-cgi.exe>           Register PHP at the server level and make it the global default
+  register <php-cgi.exe> --site X  Give site X its own PHP version (must be registered globally)
+  use-global --site X              Make site X use the global default PHP again
+  unregister <php-cgi.exe>         Remove a PHP version from the server-level list
+                                   (sites pinned to it keep working; files are not deleted)
   ini path | get <name>            Show php.ini location or a directive value
   ini set <name> <value>           Set a php.ini directive
   ini unset <name>                 Comment out a php.ini directive

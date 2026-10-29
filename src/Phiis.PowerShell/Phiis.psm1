@@ -98,6 +98,44 @@ function Register-PhiisPhp {
     }
 }
 
+function Unregister-PhiisPhp {
+    <#
+    .SYNOPSIS
+    Removes a PHP version from the server-level list. Sites pinned to it keep working; files are not deleted.
+    .EXAMPLE
+    Unregister-PhiisPhp -Path D:\php\8.3\php-cgi.exe -WhatIf
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory, Position = 0)] [string] $Path
+    )
+    if ($WhatIfPreference) {
+        return Invoke-Phiis -Arguments @('unregister', $Path) -DryRun
+    }
+    if ($PSCmdlet.ShouldProcess('server level', "Unregister PHP $Path")) {
+        Invoke-Phiis -Arguments @('unregister', $Path)
+    }
+}
+
+function Use-PhiisGlobalPhp {
+    <#
+    .SYNOPSIS
+    Makes a site use the global (server-level) default PHP version again.
+    .EXAMPLE
+    Use-PhiisGlobalPhp -Site 'Default Web Site' -WhatIf
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory, Position = 0)] [string] $Site
+    )
+    if ($WhatIfPreference) {
+        return Invoke-Phiis -Arguments @('use-global') -Site $Site -DryRun
+    }
+    if ($PSCmdlet.ShouldProcess("site '$Site'", 'Use the global default PHP')) {
+        Invoke-Phiis -Arguments @('use-global') -Site $Site
+    }
+}
+
 function Get-PhiisIniValue {
     <#
     .SYNOPSIS

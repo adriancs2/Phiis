@@ -24,6 +24,8 @@ namespace Phiis.IisManager
         private readonly Button _refresh = new Button { Text = "Refresh", AutoSize = true };
         private readonly ComboBox _versions = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520 };
         private readonly Button _switch = new Button { Text = "Switch", AutoSize = true };
+        private readonly Button _unregister = new Button { Text = "Unregister...", AutoSize = true };
+        private readonly Label _mode = new Label { AutoSize = true, ForeColor = SystemColors.GrayText, Padding = new Padding(0, 0, 0, 6) };
 
         private PhpStatus _status;
         private bool _loading;
@@ -36,6 +38,7 @@ namespace Phiis.IisManager
             _openIni.Click += delegate { OpenIni(); };
             _refresh.Click += delegate { Reload(); };
             _switch.Click += delegate { SwitchPhp(); };
+            _unregister.Click += delegate { UnregisterPhp(); };
             _versions.SelectedIndexChanged += delegate { UpdateSwitchButton(); };
 
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
@@ -46,10 +49,12 @@ namespace Phiis.IisManager
             {
                 new Label { Text = "PHP version:", AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 6, 0, 0) },
                 _versions,
-                _switch
+                _switch,
+                _unregister
             });
 
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(12) };
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -59,6 +64,7 @@ namespace Phiis.IisManager
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
             layout.Controls.Add(_summary);
             layout.Controls.Add(switcher);
+            layout.Controls.Add(_mode);
             layout.Controls.Add(buttons);
             layout.Controls.Add(Heading("Health check"));
             layout.Controls.Add(_findings);
@@ -138,31 +144,68 @@ namespace Phiis.IisManager
                             + "\r\nphp.ini: " + (_status.IniPath ?? "-");
         }
 
+        /// <summary>One entry of the version drop-down. Build == null is the site's "Global default" entry.</summary>
         private sealed class VersionChoice
         {
             public PhpBuild Build;
+            public string GlobalDefaultText;
             public bool Active;
+            public bool NotGlobal;
 
             public override string ToString()
             {
-                return "PHP " + Build.VersionText + " (" + Build.Architecture + ", " + (Build.ThreadSafe ? "TS" : "NTS") + ")  "
-                       + Build.ExecutablePath + (Active ? "  [active]" : "");
+                var text = Build == null
+                    ? "Global default" + (GlobalDefaultText == null ? " (none registered)" : " (" + GlobalDefaultText + ")")
+                    : "PHP " + Build.VersionText + " (" + Build.Architecture + ", " + (Build.ThreadSafe ? "TS" : "NTS") + ")  " + Build.ExecutablePath;
+                return text + (NotGlobal ? "  [no longer registered globally]" : "") + (Active ? "  [active]" : "");
             }
+        }
+
+        private static string Describe(PhpBuild b)
+        {
+            return "PHP " + b.VersionText + " " + b.Architecture + " " + (b.ThreadSafe ? "TS" : "NTS");
+        }
+
+        private static bool Same(string exe, PhpBuild build)
+        {
+            return exe != null && string.Equals(Path.GetFullPath(Environment.ExpandEnvironmentVariables(exe.Trim('"'))),
+                build.ExecutablePath, StringComparison.OrdinalIgnoreCase);
         }
 
         private void ShowVersions()
         {
+            bool site = _status.Site != null;
             var activeExe = _status.ActiveHandler == null ? null : _status.ActiveHandler.ScriptProcessor.Split('|')[0];
+            var globalExe = _status.GlobalDefault == null ? null : _status.GlobalDefault.ScriptProcessor.Split('|')[0];
+            var builds = IisPhpConfiguration.GetRegisteredBuilds(_status);
+
             _versions.BeginUpdate();
             _versions.Items.Clear();
-            foreach (var build in IisPhpConfiguration.GetRegisteredBuilds(_status))
+            if (site)
             {
-                bool active = activeExe != null && string.Equals(Path.GetFullPath(Environment.ExpandEnvironmentVariables(activeExe.Trim('"'))),
-                    build.ExecutablePath, StringComparison.OrdinalIgnoreCase);
-                _versions.Items.Add(new VersionChoice { Build = build, Active = active });
-                if (active)
+                var globalBuild = builds.FirstOrDefault(b => Same(globalExe, b));
+                _versions.Items.Add(new VersionChoice
                 {
-                    _versions.SelectedIndex = _versions.Items.Count - 1;
+                    GlobalDefaultText = globalBuild != null ? Describe(globalBuild) : globalExe,
+                    Active = _status.Mode == PhpScopeMode.GlobalDefault
+                });
+            }
+            foreach (var build in builds)
+            {
+                // A site's own version is "active" only when pinned; a frozen copy is offered for conversion instead.
+                bool active = Same(activeExe, build) && (!site || _status.Mode == PhpScopeMode.Pinned);
+                _versions.Items.Add(new VersionChoice
+                {
+                    Build = build,
+                    Active = active,
+                    NotGlobal = !IisPhpConfiguration.IsGloballyRegistered(_status, build.ExecutablePath)
+                });
+            }
+            for (int i = 0; i < _versions.Items.Count; i++)
+            {
+                if (((VersionChoice)_versions.Items[i]).Active)
+                {
+                    _versions.SelectedIndex = i;
                 }
             }
             if (_versions.SelectedIndex < 0 && _versions.Items.Count > 0)
@@ -170,22 +213,90 @@ namespace Phiis.IisManager
                 _versions.SelectedIndex = 0;
             }
             _versions.EndUpdate();
+
+            _register.Visible = !site;       // sites choose from the server-level list
+            _unregister.Visible = !site;     // only the server level owns that list
+            _mode.Text = ModeText();
             UpdateSwitchButton();
+        }
+
+        private string ModeText()
+        {
+            switch (_status.Mode)
+            {
+                case PhpScopeMode.Server:
+                    return "Global default for every site that does not choose its own version. Sites pick from this list.";
+                case PhpScopeMode.GlobalDefault:
+                    return "This site uses the global default and follows it when the server level switches.";
+                case PhpScopeMode.Pinned:
+                    return "This site uses its own PHP version. Server-level switches and unregistering do not affect it.";
+                case PhpScopeMode.FullCopy:
+                    return "This site holds a frozen copy of the server's handler list. Choosing a version (or Global default) converts it to a normal site.";
+                default:
+                    return string.Empty;
+            }
         }
 
         private void UpdateSwitchButton()
         {
             var choice = _versions.SelectedItem as VersionChoice;
-            _switch.Enabled = _versions.Enabled && choice != null && !choice.Active;
+            bool canSwitch = choice != null && (!choice.Active || (_status != null && _status.Mode == PhpScopeMode.FullCopy));
+            _switch.Enabled = _versions.Enabled && canSwitch;
+            _unregister.Enabled = _versions.Enabled && choice != null && choice.Build != null && !choice.Active;
         }
 
         private void SwitchPhp()
         {
             var choice = _versions.SelectedItem as VersionChoice;
-            if (choice != null)
+            if (choice == null)
+            {
+                return;
+            }
+            if (choice.Build == null)
+            {
+                var site = IisSite;
+                ApplyChange(dryRun => new IisPhpConfiguration().UseGlobalDefault(site, dryRun));
+            }
+            else
             {
                 ApplyPhp(choice.Build.ExecutablePath);
             }
+        }
+
+        private void UnregisterPhp()
+        {
+            var choice = _versions.SelectedItem as VersionChoice;
+            if (choice != null && choice.Build != null)
+            {
+                var exe = choice.Build.ExecutablePath;
+                ApplyChange(dryRun => new IisPhpConfiguration().Unregister(exe, dryRun));
+            }
+        }
+
+        /// <summary>Shows what a change would do (dry run), asks, then applies it and reloads.</summary>
+        private void ApplyChange(Func<bool, ChangeResult> change)
+        {
+            try
+            {
+                var preview = change(true);
+                if (!preview.Changed)
+                {
+                    MessageBox.Show(this, "Nothing to change; already configured.", "Phiis");
+                    return;
+                }
+                var question = "Phiis will make these changes (backups are created first):\r\n\r\n- "
+                               + string.Join("\r\n- ", preview.Changes) + "\r\n\r\nContinue?";
+                if (MessageBox.Show(this, question, "Phiis", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+                {
+                    return;
+                }
+                change(false);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Phiis", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            Reload();
         }
 
         private void ShowFindings(System.Collections.Generic.IEnumerable<Finding> findings)
@@ -296,6 +407,7 @@ namespace Phiis.IisManager
                     if (!preview.Changed)
                     {
                         MessageBox.Show(this, "This PHP version is already registered and active.", "Phiis");
+                        Reload();
                         return;
                     }
 

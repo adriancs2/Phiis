@@ -46,6 +46,10 @@ namespace Phiis.Core
                     Handlers = ReadPhpHandlers(manager, site)
                 };
 
+                status.GlobalHandlers = site == null ? status.Handlers : ReadPhpHandlers(manager, null);
+                status.GlobalDefault = status.GlobalHandlers.FirstOrDefault();
+                status.Mode = site == null ? PhpScopeMode.Server : ReadSiteMode(site);
+
                 status.ActiveHandler = status.Handlers.FirstOrDefault(h => h.IsActive);
                 if (status.ActiveHandler != null)
                 {
@@ -61,14 +65,20 @@ namespace Phiis.Core
         }
 
         /// <summary>
-        /// The PHP builds IIS already knows about: every FastCGI application pointing at an existing
-        /// php-cgi.exe. Any of them can be made active for a scope with <see cref="Register"/>.
+        /// The PHP versions registered at the server level (its *.php handlers), newest first. For a pinned site the
+        /// version it uses is included even when it is no longer registered globally, so it can stay selected.
         /// </summary>
         public static List<PhpBuild> GetRegisteredBuilds(PhpStatus status)
         {
+            var paths = status.GlobalHandlers.Select(h => SplitScriptProcessor(h.ScriptProcessor)[0]).ToList();
+            if (status.Mode == PhpScopeMode.Pinned && status.ActiveHandler != null)
+            {
+                paths.Add(SplitScriptProcessor(status.ActiveHandler.ScriptProcessor)[0]);
+            }
+
             var builds = new List<PhpBuild>();
-            foreach (var path in status.FastCgiApps.Select(a => Environment.ExpandEnvironmentVariables(a.FullPath ?? string.Empty).Trim('"'))
-                         .Where(p => p.EndsWith("php-cgi.exe", StringComparison.OrdinalIgnoreCase) && File.Exists(p))
+            foreach (var path in paths.Select(p => Environment.ExpandEnvironmentVariables(p).Trim('"'))
+                         .Where(File.Exists)
                          .Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 try
@@ -81,6 +91,12 @@ namespace Phiis.Core
                 }
             }
             return builds.OrderByDescending(b => ParsedVersion(b.VersionText)).ThenBy(b => b.ExecutablePath).ToList();
+        }
+
+        /// <summary>True when the executable is one of the server-level (global) PHP versions.</summary>
+        public static bool IsGloballyRegistered(PhpStatus status, string exe)
+        {
+            return status.GlobalHandlers.Any(h => SamePath(SplitScriptProcessor(h.ScriptProcessor)[0], exe));
         }
 
         private static Version ParsedVersion(string text)
@@ -108,22 +124,27 @@ namespace Phiis.Core
         // ---------- change ----------
 
         /// <summary>
-        /// Registers a php-cgi.exe with IIS and makes it the active PHP for the scope.
+        /// Server level (site == null): registers a php-cgi.exe with IIS and makes it the global default.
+        /// Site level: pins the site to a PHP version that is registered at the server level (see <see cref="PinSite"/>).
         /// Idempotent: running it twice changes nothing the second time.
         /// </summary>
         public ChangeResult Register(string phpCgiPath, string site, bool dryRun)
         {
+            if (site != null)
+            {
+                return PinSite(phpCgiPath, site, dryRun);
+            }
+
             var build = PhpBuild.Inspect(phpCgiPath);
             var result = new ChangeResult { DryRun = dryRun };
 
             using (var manager = new ServerManager())
             {
-                EnsureSite(manager, site);
                 var host = manager.GetApplicationHostConfiguration();
 
                 EnsureFastCgiApp(host, build, result);
-                EnsureHandlerOnTop(host, site, build, result);
-                EnsureIndexPhp(host, site, result);
+                EnsureHandlerOnTop(host, null, build, result);
+                EnsureIndexPhp(host, null, result);
 
                 if (result.Changed && !dryRun)
                 {
@@ -132,6 +153,204 @@ namespace Phiis.Core
                 }
             }
             return result;
+        }
+
+        /// <summary>
+        /// Gives a site its own PHP version. The site keeps it even if the version is later unregistered at the
+        /// server level, until the site is switched to another version or back to the global default.
+        /// Only versions registered at the server level (or the one the site already uses) can be chosen.
+        /// </summary>
+        public ChangeResult PinSite(string phpCgiPath, string site, bool dryRun)
+        {
+            var build = PhpBuild.Inspect(phpCgiPath);
+            var result = new ChangeResult { DryRun = dryRun };
+            var status = GetStatus(site);
+
+            bool registered = status.GlobalHandlers.Any(h => SamePath(SplitScriptProcessor(h.ScriptProcessor)[0], build.ExecutablePath));
+            bool current = status.Mode == PhpScopeMode.Pinned && status.ActiveHandler != null
+                           && SamePath(SplitScriptProcessor(status.ActiveHandler.ScriptProcessor)[0], build.ExecutablePath);
+            if (current)
+            {
+                return result; // already pinned to this version
+            }
+            if (!registered)
+            {
+                throw new InvalidOperationException("PHP " + build.VersionText + " (" + build.ExecutablePath + ") is not registered at the server level. "
+                                                    + "Register it there first: phiis register \"" + build.ExecutablePath + "\"");
+            }
+
+            var name = "Phiis_PHP_" + (build.Branch ?? "unknown") + "_" + build.Architecture;
+            PlanLeaveFullCopy(site, status, result);
+            result.Changes.Add("Use PHP " + build.VersionText + " (" + build.ExecutablePath + ") for site '" + site + "' only (handler " + name + ")");
+
+            if (!dryRun)
+            {
+                result.Backups.Add(Backup.CopyToBackup(ApplicationHostConfigPath, Backup.DefaultDirectory));
+                LeaveFullCopy(site, status);
+                AppHostAdmin.PinPhpHandler(site, name, build.ExecutablePath, ServerPhpNames(status));
+            }
+            return result;
+        }
+
+        private static HashSet<string> ServerPhpNames(PhpStatus status)
+        {
+            return new HashSet<string>(status.GlobalHandlers.Select(h => h.Name), StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Makes a site use the server's (global) default PHP version again.</summary>
+        public ChangeResult UseGlobalDefault(string site, bool dryRun)
+        {
+            if (site == null)
+            {
+                throw new ArgumentException("UseGlobalDefault applies to a site; the server level is the global default.");
+            }
+            var result = new ChangeResult { DryRun = dryRun };
+            var status = GetStatus(site);
+            if (status.Mode == PhpScopeMode.GlobalDefault && !AppHostAdmin.ReadLocal(site).Removes.Any(ServerPhpNames(status).Contains))
+            {
+                return result; // already inheriting, and no leftover <remove> hides the server's PHP
+            }
+
+            PlanLeaveFullCopy(site, status, result);
+            result.Changes.Add("Site '" + site + "' uses the global default PHP"
+                               + (status.GlobalDefault == null ? " (none is registered at the server level)" : " (" + status.GlobalDefault.ScriptProcessor + ")"));
+
+            if (!dryRun)
+            {
+                result.Backups.Add(Backup.CopyToBackup(ApplicationHostConfigPath, Backup.DefaultDirectory));
+                LeaveFullCopy(site, status);
+                AppHostAdmin.ResetPhp(site, ServerPhpNames(status));
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Removes a PHP version from the server-level list. The global default cannot be removed (switch first).
+        /// Sites pinned to the version keep working: its FastCGI application is kept while any site uses it.
+        /// PHP files on disk are never touched.
+        /// </summary>
+        public ChangeResult Unregister(string phpCgiPath, bool dryRun)
+        {
+            var exe = Path.GetFullPath(Environment.ExpandEnvironmentVariables(phpCgiPath.Trim('"')));
+            var result = new ChangeResult { DryRun = dryRun };
+
+            using (var manager = new ServerManager())
+            {
+                var host = manager.GetApplicationHostConfiguration();
+                var handlers = host.GetSection(HandlersSection).GetCollection();
+                var php = handlers.Where(IsPhpHandler).ToList();
+                var matches = php.Where(h => SamePath(SplitScriptProcessor((string)h["scriptProcessor"])[0], exe)).ToList();
+                if (matches.Count == 0)
+                {
+                    return result;
+                }
+                if (php.IndexOf(matches[0]) == 0)
+                {
+                    throw new InvalidOperationException(exe + " is the global default PHP. Make another version the default first, then unregister this one.");
+                }
+
+                foreach (var h in matches)
+                {
+                    result.Changes.Add("Remove server-level handler " + h["name"] + " (" + exe + ")");
+                    handlers.Remove(h);
+                }
+
+                var users = SitesUsing(manager, exe);
+                var apps = host.GetSection(FastCgiSection).GetCollection();
+                foreach (var app in apps.Where(a => SamePath((string)a["fullPath"], exe)).ToList())
+                {
+                    if (users.Count > 0)
+                    {
+                        result.Changes.Add("Keep FastCGI application " + exe + ": still used by site(s) " + string.Join(", ", users));
+                    }
+                    else
+                    {
+                        result.Changes.Add("Remove FastCGI application " + exe);
+                        apps.Remove(app);
+                    }
+                }
+
+                if (!dryRun)
+                {
+                    result.Backups.Add(Backup.CopyToBackup(ApplicationHostConfigPath, Backup.DefaultDirectory));
+                    manager.CommitChanges();
+                }
+            }
+            return result;
+        }
+
+        /// <summary>Sites whose own handlers point at the executable: pinned sites and full copies.</summary>
+        public static List<string> SitesUsing(ServerManager manager, string exe)
+        {
+            return manager.Sites.Select(s => s.Name)
+                .Where(site => AppHostAdmin.ReadLocal(site).PhpAdds.Any(a => SamePath(SplitScriptProcessor(a.ScriptProcessor)[0], exe)))
+                .ToList();
+        }
+
+        private static PhpScopeMode ReadSiteMode(string site)
+        {
+            var local = AppHostAdmin.ReadLocal(site);
+            if (local.HasClear)
+            {
+                return PhpScopeMode.FullCopy;
+            }
+            return local.PhpAdds.Any() ? PhpScopeMode.Pinned : PhpScopeMode.GlobalDefault;
+        }
+
+        /// <summary>
+        /// A full copy (&lt;clear/&gt; + every handler) is replaced by inheritance before changing PHP, but only when
+        /// its non-PHP handlers equal the server's: otherwise it holds real site customisations, which Phiis will not drop.
+        /// </summary>
+        private void PlanLeaveFullCopy(string site, PhpStatus status, ChangeResult result)
+        {
+            if (status.Mode != PhpScopeMode.FullCopy)
+            {
+                return;
+            }
+            var differences = FullCopyDifferences(site);
+            if (differences.Count > 0)
+            {
+                throw new InvalidOperationException("Site '" + site + "' has its own copy of the whole handler list with custom changes ("
+                                                    + string.Join(", ", differences.Take(5)) + (differences.Count > 5 ? ", ..." : "")
+                                                    + "). Phiis will not drop them. Review 'Handler Mappings' for the site in IIS Manager "
+                                                    + "('Revert To Parent' removes the copy), then try again.");
+            }
+            result.Changes.Add("Replace site '" + site + "''s frozen copy of the server handler list with inheritance (it has no custom handlers; it also picks up handlers added to the server since)");
+        }
+
+        private static void LeaveFullCopy(string site, PhpStatus status)
+        {
+            if (status.Mode == PhpScopeMode.FullCopy)
+            {
+                AppHostAdmin.DeleteLocalSection(site);
+            }
+        }
+
+        /// <summary>
+        /// Non-PHP handlers that exist only in a site's full copy, or differ from the server's: real site customisations.
+        /// Handlers the server has but the copy lacks are just staleness (added to the server after the copy was made),
+        /// and inheritance brings them back, so they do not count. Neither does order.
+        /// </summary>
+        private static List<string> FullCopyDifferences(string site)
+        {
+            using (var manager = new ServerManager())
+            {
+                var host = manager.GetApplicationHostConfiguration();
+                Func<ConfigurationElementCollection, List<string>> describe = c => c
+                    .Where(h => !IsPhpHandler(h))
+                    .Select(h => string.Join("|", Snapshot(h).OrderBy(p => p.Key).Select(p => p.Key + "=" + p.Value)))
+                    .ToList();
+                var server = describe(host.GetSection(HandlersSection).GetCollection());
+                var copy = describe(host.GetSection(HandlersSection, site).GetCollection());
+
+                return copy.Except(server).Select(NameOf).Distinct().ToList();
+            }
+        }
+
+        private static string NameOf(string description)
+        {
+            var name = description.Split('|').FirstOrDefault(p => p.StartsWith("name=", StringComparison.Ordinal));
+            return name == null ? description : name.Substring(5);
         }
 
         private static void EnsureFastCgiApp(Configuration host, PhpBuild build, ChangeResult result)
@@ -171,9 +390,10 @@ namespace Phiis.Core
             }
         }
 
+        /// <summary>Server level only: sites get their PHP through <see cref="PinSite"/>, which writes a delta instead of a copy.</summary>
         private static void EnsureHandlerOnTop(Configuration host, string site, PhpBuild build, ChangeResult result)
         {
-            var section = site == null ? host.GetSection(HandlersSection) : host.GetSection(HandlersSection, site);
+            var section = host.GetSection(HandlersSection);
             var handlers = section.GetCollection();
 
             var all = handlers.ToList();

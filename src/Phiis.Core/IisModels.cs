@@ -23,11 +23,32 @@ namespace Phiis.Core
         public bool IsLocal { get; set; }
     }
 
+    /// <summary>How a scope gets its PHP.</summary>
+    public enum PhpScopeMode
+    {
+        /// <summary>The server level itself.</summary>
+        Server,
+        /// <summary>A site with no PHP handler of its own: it uses the server's (global) default.</summary>
+        GlobalDefault,
+        /// <summary>A site with its own *.php handler, used before any inherited one.</summary>
+        Pinned,
+        /// <summary>
+        /// A site holding a full copy of the server's handler list (&lt;clear/&gt; + every handler), as written by
+        /// older Phiis versions and IIS Manager's "View Ordered List". It no longer sees server-level changes.
+        /// </summary>
+        FullCopy
+    }
+
     /// <summary>Everything Phiis knows about PHP at one IIS scope (server or a site).</summary>
     public sealed class PhpStatus
     {
         /// <summary>null = server level.</summary>
         public string Site { get; set; }
+        public PhpScopeMode Mode { get; set; }
+        /// <summary>The PHP versions registered at the server level, in IIS order (the first is the global default).</summary>
+        public List<PhpHandler> GlobalHandlers { get; set; }
+        /// <summary>The server-level default PHP handler, or null.</summary>
+        public PhpHandler GlobalDefault { get; set; }
         public bool FastCgiModuleInstalled { get; set; }
         public List<PhpHandler> Handlers { get; set; }
         public List<FastCgiApp> FastCgiApps { get; set; }

@@ -18,8 +18,13 @@ Get the latest `Phiis-<version>-x64.msi` from the [Releases](../../releases/late
 ## Features
 
 - **IIS Manager page** ("Phiis (PHP)" tile, server or site level): health check, extension on/off
-  checkboxes, built-in `php.ini` editor, and a **PHP version switcher** that makes any registered
-  `php-cgi.exe` the active PHP for a site or the whole server
+  checkboxes, built-in `php.ini` editor, and a **PHP version switcher**
+- **Global and per-site PHP versions.** The server level holds the list of registered versions and the
+  global default. Each site either follows the **Global default** or uses **its own version**, chosen
+  from that list. A site's own version is isolated: switching the global default doesn't touch it, and
+  it keeps working even after that version is unregistered at the server level. Sites inherit
+  everything else from the server, because Phiis writes a single site handler instead of a copy of the
+  whole handler list
 - **Health check** (`phiis doctor`): FastCGI module, handler mappings, TS/NTS, end-of-life dates,
   `php.ini`, extensions, and the matching **Visual C++ runtime** for PHP 8.x / 7.x (VC14+) down to
   PHP 5.5/5.6 (VC11), 5.3/5.4 (VC9) and 5.2 (VC6)
@@ -38,6 +43,9 @@ Get the latest `Phiis-<version>-x64.msi` from the [Releases](../../releases/late
 ```
 phiis info D:\php\8.4\php-cgi.exe        # inspect a PHP build (no admin needed)
 phiis register D:\php\8.4\php-cgi.exe    # register with IIS and make it active (also switches versions)
+phiis register D:\php\8.3\php-cgi.exe --site "Default Web Site"   # this site only (isolated)
+phiis use-global --site "Default Web Site"                          # back to the global default
+phiis unregister D:\php\8.2\php-cgi.exe                             # remove from the server list
 phiis register D:\php\8.4\php-cgi.exe --site "Default Web Site" --dry-run
 phiis status
 phiis doctor                             # exit code 2 when errors are found
@@ -93,7 +101,7 @@ Download the MSI from [Releases](../../releases/latest), double-click it, then r
 Or from an elevated prompt:
 
 ```
-msiexec /i Phiis-0.3.0-x64.msi
+msiexec /i Phiis-0.4.0-x64.msi
 ```
 
 Silent install: add `/qn`. Installing a newer MSI upgrades the old one in place. Uninstall removes the IIS Manager registration, but never touches your PHP
@@ -123,8 +131,8 @@ Bump `<Version>` in `src/Directory.Build.props` (and `ModuleVersion` in `src/Phi
 commit, then push a matching tag:
 
 ```
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 The `release` workflow builds, tests and publishes a GitHub Release with the MSI and its SHA-256 checksum.
